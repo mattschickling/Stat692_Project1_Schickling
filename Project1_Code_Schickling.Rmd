@@ -1,0 +1,337 @@
+---
+title: "Penguin Analysis"
+author: "Matthew Schickling"
+date: "2026-06-04"
+output: html_document
+---
+
+```{r init, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r Libraries, warning=FALSE, message=FALSE, include = FALSE}
+# Required Libraries
+library(palmerpenguins)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(caret)
+library(factoextra)
+library(gridExtra)
+library(pROC)
+```
+
+```{r DataReadin, warning=FALSE, message = FALSE, include = FALSE}
+#install.packages("palmerpenguins") # remove if already installed
+
+penguinData <- palmerpenguins::penguins %>%
+  select(species, bill_length_mm, flipper_length_mm)
+
+# Add ID Column to Data
+penguinData <- penguinData %>%
+  mutate(ID = row_number())
+
+```
+
+
+### Exploratory Data Analysis
+#### Data Summary
+```{r DataSummary, echo=FALSE}
+#Summary of Data
+gentoo <- penguinData %>%
+  select(-ID) %>%
+  filter(species == "Gentoo")
+
+adelie <- penguinData %>%
+  select(-ID) %>%
+  filter(species == "Adelie")
+
+chinstrap <- penguinData %>%
+  select(-ID) %>%
+  filter(species == "Chinstrap")
+
+summary(adelie)
+summary(gentoo)
+summary(chinstrap)
+
+```
+
+
+#### Missing Data
+
+```{r missingData, echo=FALSE}
+# Missing Data
+NAs <- penguinData %>%
+  filter(is.na(flipper_length_mm) == 1 | is.na(bill_length_mm) == 1 | is.na(species) == 1) %>%
+  summarise(n()) %>%
+  as.numeric()
+
+## Remove Missing Data
+penguinData <- penguinData %>%
+  drop_na(species, flipper_length_mm, bill_length_mm)
+```
+
+
+There are two penguins with missing values for flipper length and bill length, but with a species classification. The penguins with missing values represent less than 1% of the data (1/152 Adelie penguins & 1/124 Gentoo penguins). 
+
+These observations have been removed since doing so is unlikely to affect the overall analysis. 
+
+
+#### Flipper Length and Bill Lengthy By Species
+
+```{r BoxPlots, echo=FALSE, warning=FALSE}
+# Box Plots
+p1 <- ggplot(penguinData, aes(species, flipper_length_mm, fill = species)) +
+  geom_boxplot() +
+  theme_bw() +
+  labs(title = "Flipper Length by Species",
+       x = "Species",
+       y = "Flipper Length (mm)") +
+  scale_fill_brewer(palette = "Dark2") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    axis.title = element_text(face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+p2 <- ggplot(penguinData, aes(species, bill_length_mm, fill = species)) +
+  geom_boxplot() +
+  theme_bw() +
+  labs(title = "Bill Length by Species",
+       x = "Species",
+       y = "Bill Length (mm)") +
+  scale_fill_brewer(palette = "Dark2") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    axis.title = element_text(face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+grid.arrange(p1, p2, ncol = 2)
+
+```
+
+
+Gentoo penguins appear to have a longer flipper length than Adelie and Chinstrap penguins, while Adelie penguins appear to have shorter bill lengths than Chinstrap and Gentoo penguins.
+
+
+#### Analysis of Outliers
+
+```{r Outliers, echo=FALSE, include=FALSE}
+# Analyze Outliers
+Outliers <- penguinData %>%
+  group_by(species) %>%
+  mutate(flipperIQR = IQR(flipper_length_mm), billIQR = IQR(bill_length_mm),
+         flipperQ1 = quantile(flipper_length_mm, 0.25), billQ1 = quantile(bill_length_mm,0.25),
+         flipperQ3 = quantile(flipper_length_mm, 0.75), billQ3 = quantile(bill_length_mm, 0.75)) %>%
+  ungroup() %>%
+  mutate(flipperOutlier = 
+           ifelse(flipper_length_mm > flipperQ3 + 1.5*flipperIQR | flipper_length_mm < flipperQ1 - 1.5*flipperIQR, 1, 0),
+         billOutlier = 
+           ifelse(bill_length_mm > billQ3 + 1.5*billIQR | bill_length_mm < billQ1 - 1.5*billIQR, 1, 0)) %>%
+  filter(flipperOutlier == 1 | billOutlier == 1)
+
+FlipperOutliers <- Outliers %>%
+  filter(flipperOutlier == 1) %>%
+  mutate(IQRMult = 
+           ifelse(flipper_length_mm < flipperQ1, (flipperQ1 - flipper_length_mm)/flipperIQR, 
+                  (flipper_length_mm - flipperQ3)/flipperIQR)) 
+
+BillOutliers <- Outliers %>%
+  filter(billOutlier == 1) %>%
+  mutate(IQRMult = 
+           ifelse(bill_length_mm < billQ1, (billQ1 - bill_length_mm)/billIQR, 
+                  (bill_length_mm - billQ3)/billIQR)) 
+
+# These metrics show that the outliers do not extend more than 3 times the IQR
+print(FlipperOutliers$IQRMult)
+print(BillOutliers$IQRMult)
+
+```
+
+
+From the boxplots above, there are three observations that appear to be mild outliers, two for Flipper Length and one for Bill Length. 
+The scatter plot shown below shows one point that could create issues (observation 130) for future predictions given it overlaps the Flipper Length and Bill Length region for a different penguin species. However, the effects of this outlier can be easily mitigated when creating the model and it should not impact the overall analysis.
+
+
+```{r ScatterPlot, echo=FALSE}
+# Bill Length vs. Flipper Length by Species
+ggplot(penguinData, aes(flipper_length_mm, bill_length_mm, color = species)) +
+  geom_point() +
+  theme_bw() +
+  labs(
+    title = "Flipper Length & Bill Length by Species",
+    x = "Flipper Length (mm)",
+    y = "Bill Length (mm)",
+    color = "Species"
+  ) +
+  scale_color_brewer(palette = "Dark2") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    axis.title = element_text(face = "bold", size = 12),
+    legend.position = c(1,0),
+    legend.justification = c("right","bottom"),
+    legend.background = element_rect(color = "black", linewidth = 0.5),
+    legend.text = element_text(size = 8),
+    legend.spacing.y = unit(0.01, "cm"),
+    legend.title = element_text(size = 8),
+    legend.margin = margin(t = 0, r = 0.1, b = 0, l = 0.1, unit = "cm")
+    ) +
+  ggrepel::geom_text_repel(
+    data = FlipperOutliers,
+    aes(label = ID, color = "Flipper Outlier (1.5*IQR)"),
+    box.padding = 0.5,
+    nudge_y = -0.5,
+    nudge_x = 0.15
+  ) +
+  ggrepel::geom_text_repel(
+    data = BillOutliers,
+    aes(label = ID, color = "Bill Outlier (1.5*IQR)"),
+    box.padding = 0.5,
+    nudge_y = 0.5,
+    nudge_x = -0.15
+  )
+
+```
+
+
+### Model Creation
+
+The scatter plot above shows distinct regions of Flipper Length and Bill Length on which predictions about a penguin's species can be made. The plot below shows the decision boundary for the model. The model classifies penguins according to the shaded region in which their Flipper Length and Bill Length fall.
+
+
+```{r Model, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(100)
+
+# Center and Scale Numeric Variables
+penguinNum <- penguinData %>%
+  select(flipper_length_mm, bill_length_mm)
+
+parameters <- preProcess(penguinNum, method = c("scale","center"))
+
+penguinScale <- predict(parameters, penguinNum)
+
+penguinScaleY <- data.frame(penguinScale, species = penguinData$species)
+
+
+# Create Stratified Data Partition to create training/test data sets
+trainIndex <- createDataPartition(penguinData$species, p = 0.85, list = FALSE)
+
+trainData <- penguinScaleY[trainIndex, ]
+testData <- penguinScaleY[-trainIndex, ]
+
+# Create KNN Model with Repeated K-Fold Cross Validation
+control <- trainControl(method = "repeatedcv", repeats = 5)
+
+model <- train(species ~ ., data = trainData, method = "knn", 
+               trControl = control, tuneLength = 20)
+
+#model$bestTune # K selection
+
+# Create Decision Boundary Plot
+
+testGrid <- expand.grid(flipper_length_mm = seq(min(penguinData$flipper_length_mm),max(penguinData$flipper_length_mm) + 1,.1),
+                        bill_length_mm = seq(min(penguinData$bill_length_mm), max(penguinData$bill_length_mm) + 1,.1))
+
+testGridScale <- predict(parameters, testGrid)
+
+gridPreds <- predict(model, testGridScale)
+
+testGrid <- data.frame(testGrid, gridPreds)
+
+dbplot <- ggplot() +
+  geom_tile(data = testGrid, aes(x = flipper_length_mm, y = bill_length_mm, fill = gridPreds), alpha = 0.2) +
+  geom_point(data = penguinData, aes(x = flipper_length_mm, y = bill_length_mm, color = species)) +
+  theme_bw() +
+  scale_color_brewer(palette = "Dark2", name = "Species") +
+  scale_fill_brewer(palette = "Dark2", name = "Species") +
+  labs(
+    title = "Decision Boundary for Classification of Species",
+    x = "Flipper Length (mm)",
+    y = "Bill Length (mm)",
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    axis.title = element_text(face = "bold", size = 12),
+    )
+
+dbplot
+```
+
+### Analyze Model Performance
+
+When building the model, the data were randomly split into a training dataset (85% of data), upon which the model was built and a training dataset (15% of data), which can be used to assess the model's performance. The proportions of each species represented in the overall dataset were maintained in both the training and testing dataset.
+
+The table below shows the predicted species vs. the true species for the testing data. Of the 50 observations in the testing dataset, only two were incorrectly classified, giving the model a high degree of accuracy.
+
+
+```{r ModelPerformance, echo=FALSE}
+# Confusion Matrix
+testPreds <- predict(model, testData)
+
+confusion <- confusionMatrix(testPreds, testData$species)
+
+#print(confusion)    #Use to get performance characteristics like Kappa
+
+confusion$table
+
+```
+
+
+In addition to the accuracy of the model, the kappa is `r round(confusion[[3]][2],4)`. A value close to 1.0 suggests the model's high accuracy is not purely by chance.
+
+
+```{r ModelPerformance2, echo=FALSE}
+# ROC Curve
+testProbs <- predict(model, testData, type = "prob")
+
+roc <- multiclass.roc(testData$species, testProbs)
+
+#roc$auc[1] The multi-class ROC AUC is also really close to 1.0, so the model has good predictive power.  
+```
+
+
+### Final Prediction for Unknown Specimen 
+
+```{r Prediction, echo=FALSE}
+unknownPenguin <- data.frame(flipper_length_mm = 220, bill_length_mm = 45)
+
+unknownPenguinScale <- predict(parameters, unknownPenguin)
+
+FinalPredProb <- predict(model, unknownPenguinScale, type = "prob")
+FinalPred <- predict(model, unknownPenguinScale)
+
+```
+
+
+Given a Flipper Length of 220 mm and Bill Length of 45 mm, the most likely species for the unknown Penguin specimen is `r FinalPred`.
+
+Plotting the specimen on the previous decision boundary plot shows that the specimen is not on the decision boundary, increasing the confidence that it is a `r FinalPred` Penguin.
+
+
+```{r Prediction2, echo=FALSE}
+dbplot + 
+  geom_point(data = unknownPenguin, aes(x = flipper_length_mm, y = bill_length_mm, shape = "Unknown Penguin"), 
+             color = "red", size = 4) +
+  scale_shape_manual(name = "Legend", values = c("Unknown Penguin" = 15)) +
+  labs(
+    title = "Unknown Specimen on Decision Boundary Plot",
+    x = "Flipper Length (mm)",
+    y = "Bill Length (mm)",
+  ) 
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
