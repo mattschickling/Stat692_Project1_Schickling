@@ -73,7 +73,7 @@ penguinData <- penguinData %>%
 ```
 
 
-There are two penguins with missing values for flipper length and bill length, but with a species classification. The penguins with missing values represent less than 1% of the data (1/152 Adelie penguins & 1/124 Gentoo penguins). 
+There are two penguins with missing values for flipper length and bill length. The penguins with missing values represent less than 1% of the data (1/152 Adelie penguins & 1/124 Gentoo penguins). 
 
 These observations have been removed since doing so is unlikely to affect the overall analysis. 
 
@@ -316,17 +316,40 @@ dbplot +
              color = "red", size = 4) +
   scale_shape_manual(name = "Legend", values = c("Unknown Penguin" = 15)) +
   labs(
-    title = "Unknown Specimen on Decision Boundary Plot",
+    title = "Flipper Length vs. Bill Length by Species",
     x = "Flipper Length (mm)",
     y = "Bill Length (mm)",
   ) 
 
 ```
 
+### Visual Analysis
+
+```{r VisualCheck, echo=FALSE}
+# Flipper Length is high for both Chinstrap and Adelie Penguins
+# Test how likely it is that we'd see a Chinstrap or Adelie with a flipper length of at least 220 mm
+
+adeliemeanflip <- mean(adelie$flipper_length_mm)
+adeliesdflip <- sd(adelie$flipper_length_mm)
+nadelie <- nrow(adelie)
+tadelie <- (220 - adeliemeanflip) / (adeliesdflip/sqrt(nadelie))
+
+probadel <- 1 - pt(tadelie, df = nadelie - 1)
 
 
+chinmeanflip <- mean(chinstrap$flipper_length_mm)
+chinsdflip <- sd(chinstrap$flipper_length_mm)
+nchin <- nrow(chinstrap)
+tchin <- (220 - chinmeanflip) / (chinsdflip/sqrt(nchin))
+
+probchin <- 1 - pt(tchin, df = nchin - 1)
 
 
+```
+
+Given the data, the probability we would see an Adelie with flipper length at least as large as 220 mm is 0. 
+
+The probability we would see a Chinstrap with flipper length at least as large as 220 mm is 0.
 
 
 
